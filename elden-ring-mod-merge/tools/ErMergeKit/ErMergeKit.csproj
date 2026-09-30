@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    ermerge: Elden Ring mod merge toolkit built on the libraries shipped with Smithbox.
+    Build through scripts/setup.py, which passes:
+      -p:SmithboxDir=<folder containing Smithbox.exe / Andre.SoulsFormats.dll>
+      -p:TargetFramework=net<X>.0   (read from Andre.SoulsFormats.dll)
+      -p:GameDir=<ELDEN RING\Game>  (source of oo2core_6_win64.dll for Kraken-compressed binders)
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework Condition="'$(TargetFramework)' == ''">net10.0</TargetFramework>
+    <RollForward>Major</RollForward>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>ermerge</AssemblyName>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <!-- Libraries taken from the Smithbox program folder; missing optional ones are skipped. -->
+  <ItemGroup>
+    <Reference Include="Andre.SoulsFormats" Condition="Exists('$(SmithboxDir)\Andre.SoulsFormats.dll')"><HintPath>$(SmithboxDir)\Andre.SoulsFormats.dll</HintPath></Reference>
+    <Reference Include="Andre.Formats" Condition="Exists('$(SmithboxDir)\Andre.Formats.dll')"><HintPath>$(SmithboxDir)\Andre.Formats.dll</HintPath></Reference>
+    <Reference Include="Andre.Core" Condition="Exists('$(SmithboxDir)\Andre.Core.dll')"><HintPath>$(SmithboxDir)\Andre.Core.dll</HintPath></Reference>
+    <Reference Include="DotNext" Condition="Exists('$(SmithboxDir)\DotNext.dll')"><HintPath>$(SmithboxDir)\DotNext.dll</HintPath></Reference>
+    <Reference Include="DotNext.Unsafe" Condition="Exists('$(SmithboxDir)\DotNext.Unsafe.dll')"><HintPath>$(SmithboxDir)\DotNext.Unsafe.dll</HintPath></Reference>
+    <Reference Include="DotNext.IO" Condition="Exists('$(SmithboxDir)\DotNext.IO.dll')"><HintPath>$(SmithboxDir)\DotNext.IO.dll</HintPath></Reference>
+    <Reference Include="CommunityToolkit.HighPerformance" Condition="Exists('$(SmithboxDir)\CommunityToolkit.HighPerformance.dll')"><HintPath>$(SmithboxDir)\CommunityToolkit.HighPerformance.dll</HintPath></Reference>
+    <Reference Include="BouncyCastle.Cryptography" Condition="Exists('$(SmithboxDir)\BouncyCastle.Cryptography.dll')"><HintPath>$(SmithboxDir)\BouncyCastle.Cryptography.dll</HintPath></Reference>
+    <Reference Include="ZstdNet" Condition="Exists('$(SmithboxDir)\ZstdNet.dll')"><HintPath>$(SmithboxDir)\ZstdNet.dll</HintPath></Reference>
+    <Reference Include="DrSwizzler" Condition="Exists('$(SmithboxDir)\DrSwizzler.dll')"><HintPath>$(SmithboxDir)\DrSwizzler.dll</HintPath></Reference>
+    <Reference Include="Havok.HKLib" Condition="Exists('$(SmithboxDir)\Havok.HKLib.dll')"><HintPath>$(SmithboxDir)\Havok.HKLib.dll</HintPath></Reference>
+    <Reference Include="Havok.HKLib.Reflection" Condition="Exists('$(SmithboxDir)\Havok.HKLib.Reflection.dll')"><HintPath>$(SmithboxDir)\Havok.HKLib.Reflection.dll</HintPath></Reference>
+    <Reference Include="Havok.HKLib.Serialization" Condition="Exists('$(SmithboxDir)\Havok.HKLib.Serialization.dll')"><HintPath>$(SmithboxDir)\Havok.HKLib.Serialization.dll</HintPath></Reference>
+    <Reference Include="Havok.Shared" Condition="Exists('$(SmithboxDir)\Havok.Shared.dll')"><HintPath>$(SmithboxDir)\Havok.Shared.dll</HintPath></Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="$(SmithboxDir)\libzstd.dll" Condition="Exists('$(SmithboxDir)\libzstd.dll')" CopyToOutputDirectory="PreserveNewest" Link="libzstd.dll" />
+    <None Include="$(SmithboxDir)\bhd5_decrypt_rust.dll" Condition="Exists('$(SmithboxDir)\bhd5_decrypt_rust.dll')" CopyToOutputDirectory="PreserveNewest" Link="bhd5_decrypt_rust.dll" />
+    <None Include="$(SmithboxDir)\oo2core_6_win64.dll" Condition="Exists('$(SmithboxDir)\oo2core_6_win64.dll')" CopyToOutputDirectory="PreserveNewest" Link="oo2core_6_win64.dll" />
+    <None Include="$(GameDir)\oo2core_6_win64.dll" Condition="!Exists('$(SmithboxDir)\oo2core_6_win64.dll') And Exists('$(GameDir)\oo2core_6_win64.dll')" CopyToOutputDirectory="PreserveNewest" Link="oo2core_6_win64.dll" />
+    <None Include="$(SmithboxDir)\Res\HavokTypeRegistry20180100.xml" Condition="Exists('$(SmithboxDir)\Res\HavokTypeRegistry20180100.xml')" CopyToOutputDirectory="PreserveNewest" Link="Res\HavokTypeRegistry20180100.xml" />
+  </ItemGroup>
+
+</Project>
