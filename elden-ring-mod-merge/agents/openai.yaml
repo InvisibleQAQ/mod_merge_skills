@@ -1,4 +1,0 @@
-interface:
-  display_name: "法环 Mod 合并"
-  short_description: "命令行合并两个法环 Mod 与 regulation.bin，真实冲突交由用户决定"
-  default_prompt: "使用 $elden-ring-mod-merge 合并两份法环 Mod，先确认共同基线，自动合并确定项，再让我决定冲突。"
