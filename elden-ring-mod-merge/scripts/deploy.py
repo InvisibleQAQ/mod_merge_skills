@@ -15,7 +15,8 @@ import datetime
 import sys
 from pathlib import Path
 
-from kit import Workspace, copy_file, fail, load_json, sha256
+sys.dont_write_bytecode = True  # keep the skill folder free of __pycache__
+from kit import Workspace, copy_file, fail, load_json, sha256  # noqa: E402
 
 
 def main():

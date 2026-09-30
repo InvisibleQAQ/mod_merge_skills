@@ -4,18 +4,23 @@ usage: python analyze.py --workspace W
 
 Nothing is written outside the workspace. Run after inventory.py (and again after editing plan.json).
 Sections of SUMMARY.md:
-  merge dry-runs   per file: would the merge succeed with the current plan, which items conflict
+  merge dry-runs   per file: would the merge succeed with the current plan, which items conflict; plan entries
+                   that replace a plain copy (take + drop_entries, manual) are dry-run too
   review leads     HKS heuristics, effect-ID collisions across packs, DLLs/natives, installer files to read
-  write-back       roundtrip checks proving the libraries can rewrite each file type involved
+  write-back       roundtrip checks proving the libraries can rewrite each file type involved, on both sides
 """
 import argparse
 import re
+import sys
 from collections import defaultdict
 from pathlib import Path
 
-import hks_analyze
-from kit import Workspace, base_path, load_json, save_json
-from text_merge import merge3, read_nameid
+sys.dont_write_bytecode = True  # keep the skill folder free of __pycache__
+import hks_analyze  # noqa: E402
+from kit import Workspace, base_path, load_json, save_json  # noqa: E402
+from text_merge import merge3, read_nameid  # noqa: E402
+
+ROUNDTRIP = ('regulation', 'tae', 'bnd', 'behavior')
 
 
 def safe(rel):
@@ -31,7 +36,36 @@ def ensure_vanilla(ws, plan, inv):
         ws.ermerge('vanilla-extract', kit['game'], ws.p('vanilla'), *['/' + r.lower() for r in want])
 
 
-def dry_run(ws, rel, spec, e, names):
+def side_master_states(ws, inv):
+    """Master_SM state numbers each side's new script code hard-codes (every .hks the side adds or changes)."""
+    out = {'a': {}, 'b': {}}
+    for e in inv['entries'].values():
+        rel = e['rel']
+        if not rel.lower().endswith('.hks'):
+            continue
+        vanilla = ws.p('vanilla', *rel.lower().split('/'))
+        base = e.get('base') or (str(vanilla) if vanilla.exists() else '-')
+        for s in ('a', 'b'):
+            if s in e and not e.get(s + '_unchanged'):
+                out[s].update(hks_analyze.master_state_ids(hks_analyze.new_code(base, e[s])))
+    return out
+
+
+def take_dry_run(ws, spec, e, names):
+    side = spec.get('side')
+    if side not in ('a', 'b') or side not in e:
+        return '**needs a decision: which side to take (or merge by hand)**'
+    if not spec.get('drop_entries'):
+        return f'take {names[side]}'
+    code, out = ws.ermerge('bnd-drop', e[side], '-', *spec['drop_entries'], '--dry-run', check=False, quiet=True)
+    hits = [x.strip() for x in out.splitlines() if x.strip().startswith('dropped ')]
+    s = f'take {names[side]} minus {len(hits)} entries (drop_entries {spec["drop_entries"]})'
+    if code:
+        s += ' - **ERROR: ' + out.strip().splitlines()[-1] + '**'
+    return s + ''.join(f'\n  - {h}' for h in hits)
+
+
+def dry_run(ws, rel, spec, e, names, master):
     kit, strat = ws.kit, spec['strategy']
     base = base_path(ws, rel, spec, e)
     rep = ws.p('analysis', safe(rel) + '.json')
@@ -52,11 +86,15 @@ def dry_run(ws, rel, spec, e, names):
             code, out = ws.ermerge('beh-merge', base, e[keep], e[move], dummy, '--report', r, '--dry-run', check=False, quiet=True)
             j = load_json(r, {})
             st = j.get('stats', {}).get('behavior', {})
+            remapped = {int(k) for sm, m in (st.get('stateIdMaps') or {}).items() if sm.endswith(':Master_SM') for k in m}
+            hit = sorted(remapped & set(master[move]))
             lines.append(f'  - KEEP {names[keep]} / MOVE {names[move]}: {"OK" if code == 0 else "CONFLICTS"}; '
                          f'{len(j.get("conflicts", []))} conflicts, MOVE adds {st.get("moveNewObjects")} objects and changes '
                          f'{st.get("moveModifiedObjects")}; stateId remaps {st.get("stateIdMaps")}; wraps {len(st.get("wraps", []))}; '
-                         f'unmapped index values {len(st.get("suspicious", []))}')
-        return 'dry-run both directions (pick KEEP = the side with hard-coded behavior IDs, else the one with more changes):\n' + '\n'.join(lines)
+                         f'unmapped index values {len(st.get("suspicious", []))}'
+                         + (f'; **blocked: renumbers {names[move]}\'s hard-coded Master_SM state(s) {", ".join(map(str, hit))}**' if hit else ''))
+        return ('dry-run both directions. Pick KEEP by: 1. hard-coded behavior IDs (never pick a blocked direction) > '
+                '2. the direction without conflicts > 3. the side with more changes:\n' + '\n'.join(lines))
     elif strat == 'nameid':
         if base == '-':
             return 'no base table: extract the vanilla one (base_source: vanilla)'
@@ -65,11 +103,13 @@ def dry_run(ws, rel, spec, e, names):
         return (f'base {len(c)}, {names["a"]} appends {len(na) - len(c)}, {names["b"]} appends {len(nb) - len(c)}'
                 + (f'; **{", ".join(bad)} changed existing entries -> manual merge**' if bad else '; append-only, OK'))
     elif strat == 'text3':
-        n = merge3(kit['git'], base, e['a'], e['b'], None)
+        n = merge3(kit['git'], base, e['a'], e['b'], None, tmp=ws.dir)
         return f'git merge-file: {n} conflict hunk(s)' + (' -> resolve by hand (strategy manual)' if n else ', clean')
-    elif strat in ('take', 'manual'):
-        side = spec.get('side')
-        return f'take {names.get(side, "?")}' if side else '**needs a decision: which side to take (or merge by hand)**'
+    elif strat == 'take':
+        return take_dry_run(ws, spec, e, names)
+    elif strat == 'manual':
+        src = spec.get('source')
+        return f'manual copy of `{src}`' + ('' if src and ws.p(*src.split('/')).exists() else ' - **source missing**')
     else:
         return f'unknown strategy {strat}'
     code, out = ws.ermerge(*args, *common, check=False, quiet=True)
@@ -85,10 +125,8 @@ def dry_run(ws, rel, spec, e, names):
     return s
 
 
-def bnd_entries(ws, path, tag):
-    tsv = ws.p('dumps', 'bnd', tag + '.tsv')
-    ws.ermerge('bnd-list', path, tsv, quiet=True)
-    rows = tsv.read_text(encoding='utf-8').splitlines()[2:]
+def bnd_entries(ws, path):
+    rows = ws.dump('bnd', path).read_text(encoding='utf-8').splitlines()[2:]
     return {c[1].lower(): c[4] for c in (r.split('\t') for r in rows) if len(c) >= 5}
 
 
@@ -100,11 +138,11 @@ def fxr_collisions(ws, inv, names):
             continue
         base_ents = {}
         if e.get('base'):
-            base_ents = bnd_entries(ws, e['base'], 'base__' + Path(k).name)
+            base_ents = bnd_entries(ws, e['base'])
         for side in ('a', 'b'):
             if side not in e or e.get(side + '_unchanged'):
                 continue
-            for name, sha in bnd_entries(ws, e[side], side + '__' + Path(k).name).items():
+            for name, sha in bnd_entries(ws, e[side]).items():
                 m = re.search(r'f(\d{9})\.fxr$', name)
                 if m and base_ents.get(name) != sha:
                     added[side][int(m.group(1))].append((e['rel'], sha))
@@ -124,17 +162,23 @@ def main():
     plan, inv = ws.plan, load_json(ws.p('inventory.json'))
     names = {'a': plan['a']['name'], 'b': plan['b']['name'], 'base': plan['base']['name']}
     ensure_vanilla(ws, plan, inv)
+    master = side_master_states(ws, inv)
     L = ['# Analysis summary', '', f'A = {names["a"]}, B = {names["b"]}, base = {names["base"]}', '', '## Merge dry-runs', '']
-    kinds = set()
+    roundtrips = set()
     for rel, spec in plan['files'].items():
         e = inv['entries'].get(rel.lower())
         if not e:
             L.append(f'- `{rel}`: not in inventory (typo in plan.json?)')
             continue
         if e['status'] != 'both_changed':
+            if spec['strategy'] in ('take', 'manual'):
+                L.append(f'- `{rel}` [{spec["strategy"]}] ({e["status"]}, replaces the plain copy): '
+                         + dry_run(ws, rel, spec, e, names, master))
             continue
-        kinds.add((spec['strategy'], e['a']))
-        L.append(f'- `{rel}` [{spec["strategy"]}]: ' + dry_run(ws, rel, spec, e, names))
+        if spec['strategy'] in ROUNDTRIP:
+            chosen = spec.get('keep' if spec['strategy'] == 'behavior' else 'primary', 'a')
+            roundtrips |= {(spec['strategy'], s, e[s], s == chosen) for s in ('a', 'b')}
+        L.append(f'- `{rel}` [{spec["strategy"]}]: ' + dry_run(ws, rel, spec, e, names, master))
     missing = [e['rel'] for e in inv['entries'].values() if e['status'] == 'both_changed' and e['rel'] not in plan['files']]
     if missing:
         L += ['', '**Files both mods changed but plan.json does not cover:** ' + ', '.join(f'`{m}`' for m in missing)]
@@ -156,11 +200,12 @@ def main():
     for side, extras in inv.get('package_extras', {}).items():
         L += ['', f'### Package files outside the mod folder ({names[side]}): read installers/readmes for config edits', '']
         L += [f'- `{x}`' for x in extras[:40]]
-    L += ['', '## Write-back checks (roundtrip)', '']
-    for strat, path in sorted(kinds):
-        if strat in ('regulation', 'tae', 'bnd', 'behavior'):
-            code, out = ws.ermerge('roundtrip', path, '--defs', ws.kit['defs'], check=False, quiet=True)
-            L.append(f'- {strat} `{Path(path).name}`: ' + '; '.join(l.strip() for l in out.splitlines() if l[:4] in ('OK r', 'OK b', 'DIFF', 'INFO', 'OK p')))
+    L += ['', '## Write-back checks (roundtrip on both sides; the result is built on the one marked "rewritten")', '']
+    for strat, side, path, chosen in sorted(roundtrips):
+        code, out = ws.ermerge('roundtrip', path, '--defs', ws.kit['defs'], check=False, quiet=True)
+        role = f', {"keep" if strat == "behavior" else "primary"} - rewritten' if chosen else ''
+        L.append(f'- {strat} `{Path(path).name}` ({names[side]}{role}): '
+                 + '; '.join(x.strip() for x in out.splitlines() if x[:4] in ('OK r', 'OK b', 'DIFF', 'INFO', 'OK p')))
     ws.p('analysis', 'SUMMARY.md').write_text('\n'.join(L) + '\n', encoding='utf-8')
     print(f'wrote {ws.p("analysis", "SUMMARY.md")}')
 

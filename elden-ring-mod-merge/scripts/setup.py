@@ -12,7 +12,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from kit import CSPROJ, Workspace, save_json
+sys.dont_write_bytecode = True  # keep the skill folder free of __pycache__
+from kit import CSPROJ, Workspace, save_json  # noqa: E402
 
 
 def run(cmd):
@@ -69,9 +70,18 @@ def main():
     git = shutil.which('git')
     if not git:
         problems.append('git not found (needed for three-way text merges of .hks and other scripts): https://git-scm.com/downloads')
-    luac = shutil.which('luac') or shutil.which('luac5.1') or shutil.which('luac5.4')
+    # Havok Script is Lua 5.1 syntax: prefer a 5.1 compiler; any other version only approximates the check.
+    luac = next(filter(None, map(shutil.which, ('luac5.1', 'luac51', 'luac', 'luac5.4', 'luac5.3', 'luac5.2'))), None)
+    luac_version = None
     if not luac:
-        notes.append('optional: luac not found; .hks syntax checks will be skipped (install Lua to enable)')
+        notes.append('optional: luac not found; .hks syntax checks will be skipped (install Lua 5.1 to enable)')
+    else:
+        m = re.search(r'Lua (\d+\.\d+)', run([luac, '-v'])[1])
+        luac_version = m.group(1) if m else 'unknown'
+        if luac_version != '5.1':
+            notes.append(f'warning: {luac} is Lua {luac_version}, but Havok Script uses Lua 5.1 syntax. `luac -p` then only '
+                         'approximates the check: 5.2+ accepts goto, //, bit operators and <const> that 5.1 rejects, and '
+                         'rejects 5.1 scripts that use goto as a name. Install Lua 5.1 (luac5.1) for an exact check.')
 
     if problems:
         print('Missing prerequisites:')
@@ -91,8 +101,9 @@ def main():
     ermerge = kit_dir / 'bin' / 'ermerge.dll'
     kit = {'dotnet': dotnet, 'ermerge': str(ermerge), 'smithbox': str(sb.resolve()), 'game': str(game.resolve()),
            'defs': str((sb / 'Assets/PARAM/ER/Defs').resolve()), 'tae_template': str((sb / 'Assets/TAE/TAE.Template.ER.xml').resolve()),
-           'git': git, 'luac': luac, 'tfm': tfm}
+           'git': git, 'luac': luac, 'luac_version': luac_version, 'tfm': tfm}
     save_json(ws.p('kit.json'), kit)
+    shutil.rmtree(ws.p('dumps', 'cache'), ignore_errors=True)  # dumps made by an older build of the tool
     code, out = ws.ermerge('roundtrip', game / 'regulation.bin', check=False, quiet=True)
     if code != 0 or 'OK regulation' not in out:
         print(out)

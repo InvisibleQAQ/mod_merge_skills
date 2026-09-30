@@ -15,8 +15,8 @@ Copy the `elden-ring-mod-merge` folder into a skills directory, e.g. `~/.claude/
 ## What the user needs
 
 Windows 10/11 x64, Elden Ring, [Smithbox](https://github.com/vawser/Smithbox/releases) (its libraries are used,
-not its UI), a .NET SDK at least as new as Smithbox's target, Python 3.9+, Git; optionally Lua for script syntax
-checks. The skill asks for these first; see [PREREQUISITES.md](elden-ring-mod-merge/PREREQUISITES.md).
+not its UI), a .NET SDK at least as new as Smithbox's target, Python 3.9+, Git; optionally Lua 5.1 for script
+syntax checks. The skill asks for these first; see [PREREQUISITES.md](elden-ring-mod-merge/PREREQUISITES.md).
 
 ## Layout
 
@@ -30,6 +30,6 @@ elden-ring-mod-merge/
   TOOLS.md             script / plan.json / ermerge reference
   EXAMPLE.md           a complete real merge
   templates/           decisions.md record, post_merge.py hook
-  scripts/             Python pipeline (setup, inventory, analyze, build, verify, deploy)
+  scripts/             Python pipeline (setup, inventory, analyze, build, verify, crosscheck, deploy)
   tools/ErMergeKit/    C# source of the ermerge tool (built by scripts/setup.py)
 ```

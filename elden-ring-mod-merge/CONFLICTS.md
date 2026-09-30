@@ -22,7 +22,8 @@
 | Same input used by both | review lead + code reading | drop one mod's use of the button / accept both / disable one feature in the mod's own settings | hook patch at the feature's entry point |
 | Runtime wrapper bypasses the other mod's new logic | review lead + code reading | accept (who wins in which situation) / add a condition to the wrapper / drop one feature | hook patch |
 | Feature overlap (two sprint systems, two landing rolls, two dodge variants) | code reading | keep one, keep both with a guard, accept precedence | hook patch or plan |
-| Effect ID collision across packs | analyze FXR section | share one copy / renumber one side (manual) | `take` + `drop_entries`, or manual |
+| Effect ID collision across packs | analyze FXR section | share one copy / renumber one side (manual) | `take` + `drop_entries` (the dry-run in SUMMARY.md lists what is dropped), or manual |
+| Reference a decision leaves dangling (dropped effect, excluded file, resolved row) | `crosscheck.py` error | undo / change the decision, or supply the target | plan or hook |
 | One-sided file both need (e.g. a text file one mod replaces wholesale) | inventory + readmes | take / merge by hand | `take`, `manual` |
 | Localization replaced by a mod | inventory (msg files) | accept / keep the base's language file (the mod's new text IDs then show blank) | `exclude` or `take` |
 | DLL interplay | readmes, DLL strings | accept / drop one DLL | `exclude` + launcher profile |
@@ -32,7 +33,11 @@
 `W/hooks/post_merge.py` runs after verification with the staging folder as argument. Keep each patch:
 - **minimal**: one early return / one extra condition at the single place a feature starts, not a rewrite;
 - **anchored**: replace exact bytes that must occur exactly once (assert it), including the file's line endings;
-- **labelled**: a trailing comment naming the decision, so the change is findable in game logs and future diffs;
+- **labelled**: a trailing `-- merge ...` comment naming the decision, so the change is findable in game logs and
+  future diffs;
+- **one contiguous edit per `patch()` call**: `build.py` diffs every patched file against its pre-hook copy
+  (`reports/hooks.diff`) and fails if a changed hunk has no `-- merge` label or the hunk count differs from the
+  number of `patch()` calls;
 - **syntax-checked**: `build.py` runs `luac -p` on every `.hks` when Lua is installed. In Lua, `return` must be the
   last statement of a block; use `do return FALSE end` for an early return.
 
@@ -44,4 +49,12 @@ patch('action/script/c0000.hks', b'function StartFeature(arg)\r\n',
 ```
 
 Find a feature's entry point by following the event that enters it (`ExecEvent*("W_...")`) back to the one function
-that fires it; verify there is no second caller before patching.
+that fires it. Before an early return in that function, read **every caller**:
+- a second caller that does not test the result: the feature may still start another way;
+- a caller that picks its branch with another predicate (`if P() then F() elseif ... end`) where `F()` is the branch's
+  only action: after the patch `P()` still selects that branch, so the caller's other branches are skipped
+  whenever `P()` is true. Either patch `P()` as well (or instead), or accept it - and tell the user. Example:
+  Suncatcher's `SpeedUpdate` does `if VGhoMVNB() then NjiwOxnT(TRUE) elseif ...`; with `NjiwOxnT` returning early,
+  holding L3 still skips every `ChangeMoveSpeedIndex` branch below.
+Write what the patch skips into the decision's **side effects** in `decisions.md` and offer the alternative as an
+option, even when the user already prescribed the patch location.

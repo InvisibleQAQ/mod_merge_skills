@@ -1,27 +1,35 @@
 """Independent verification of staging/ against the three inputs (does not reuse the C# merge code).
 
-usage: python verify.py --workspace W        (build.py runs it automatically before applying hooks)
+usage: python verify.py --workspace W        (build.py runs it on the raw merge, before applying hooks)
 
 For every file: what the three-way rule says the result must contain, compared with what was written.
-  copy/take   bytes equal the chosen source (take + drop_entries: entries equal the source minus dropped ones)
+  copy/take   bytes equal the chosen source (take + drop_entries: entries equal the source minus dropped ones;
+              every fragment must match at least one entry)
   regulation  every row/field of every param (text dumps), names included
   tae         every animation signature and TAE header
   bnd         every entry hash (FMG entries both sides changed are listed, not byte-checked)
   behavior    semantic check with indices resolved to names: KEEP untouched, MOVE's objects and changes
               present, tables = KEEP + MOVE tail, state-ID remaps and wrapper nesting as reported
   nameid      base entries unchanged, KEEP numbering unchanged, every added name present once
-  text3       no conflict markers
+  text3       no conflict markers; every line A and B changed against the base is in the result (difflib, not
+              git): line counts = base + A's changes + B's changes, and each changed block appears contiguously
+  hooks       files hooks/post_merge.py changed are checked on their pre-hook copy (reports/prehook/); the hook
+              diff (reports/hooks.diff) must consist of labelled hunks (`-- merge ...`), one per patch() call
+After a build, staging files must still have the hashes the build recorded.
 Writes reports/VERIFY.md; exit code 1 when anything is wrong.
 """
 import argparse
 import csv
+import difflib
 import json
+import re
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
-from kit import Workspace, base_path, load_json, sha256
-from text_merge import read_nameid, read_text
+sys.dont_write_bytecode = True  # keep the skill folder free of __pycache__
+from kit import Workspace, base_path, load_json, sha256  # noqa: E402
+from text_merge import line_opcodes, read_lines, read_nameid, read_text  # noqa: E402
 
 csv.field_size_limit(1 << 30)
 EVENT_FIELDS = {'m_eventId', 'm_enterEventId', 'm_exitEventId', 'm_endOfClipEventId'}
@@ -57,21 +65,16 @@ def load_params(d):
     return out
 
 
-def verify_regulation(ws, rel, spec, e, names):
-    kit, errs = ws.kit, []
+def verify_regulation(ws, rel, spec, e, names, xpath):
+    errs = []
     prim = spec.get('primary', 'a')
     oth = 'b' if prim == 'a' else 'a'
     label = spec.get(f'label_{oth}', names[oth])
     res = spec.get('resolve', {})
     dumps = {}
     base = base_path(ws, rel, spec, e)
-    for tag, path in (('p', e[prim]), ('q', e[oth]), ('b', base), ('x', ws.p('staging', rel))):
-        if path == '-':
-            dumps[tag] = {}
-            continue
-        d = ws.p('dumps', 'verify', 'reg_' + tag)
-        ws.ermerge('param-dump', path, kit['defs'], d, quiet=True)
-        dumps[tag] = load_params(d)
+    for tag, path in (('p', e[prim]), ('q', e[oth]), ('b', base), ('x', xpath)):
+        dumps[tag] = {} if path == '-' else load_params(ws.dump('param', path))
     for param, (hdr, X) in dumps['x'].items():
         P, Q, B = (dumps[t].get(param, (None, {}))[1] for t in ('p', 'q', 'b'))
         exp = dict(P)
@@ -113,11 +116,9 @@ def verify_regulation(ws, rel, spec, e, names):
 
 
 # ---------- TAE / BND ----------
-def tae_dump(ws, path, tag):
-    out = ws.p('dumps', 'verify', f'tae_{tag}.jsonl')
-    ws.ermerge('tae-dump', path, out, quiet=True)
+def tae_dump(ws, path):
     anims, heads = [], {}
-    for line in out.read_text(encoding='utf-8').splitlines():
+    for line in ws.dump('tae', path).read_text(encoding='utf-8').splitlines():
         o = json.loads(line)
         if o['kind'] == 'tae':
             heads[o['entry'].lower()] = (o['taeId'], o['flags'], o['skeleton'], o['sib'])
@@ -126,13 +127,13 @@ def tae_dump(ws, path, tag):
     return occ_keys(anims, lambda o: (o['entry'].lower(), o['id'])), heads
 
 
-def verify_tae(ws, rel, spec, e, names):
+def verify_tae(ws, rel, spec, e, names, xpath):
     prim = spec.get('primary', 'a')
     oth = 'b' if prim == 'a' else 'a'
     res, errs = spec.get('resolve', {}), []
     base = base_path(ws, rel, spec, e)
-    (P, HP), (Q, HQ), (X, HX) = tae_dump(ws, e[prim], 'p'), tae_dump(ws, e[oth], 'q'), tae_dump(ws, ws.p('staging', rel), 'x')
-    B, HB = tae_dump(ws, base, 'b') if base != '-' else ({}, {})
+    (P, HP), (Q, HQ), (X, HX) = tae_dump(ws, e[prim]), tae_dump(ws, e[oth]), tae_dump(ws, xpath)
+    B, HB = tae_dump(ws, base) if base != '-' else ({}, {})
     exp = {k: v['sig'] for k, v in P.items()}
     for key in set(Q) | set(B):
         p, q, b = (d.get(key, {}).get('sig') for d in (P, Q, B))
@@ -168,20 +169,18 @@ def verify_tae(ws, rel, spec, e, names):
     return errs, [f'{len(got)} animations in {len(HX)} TAE files checked']
 
 
-def bnd_list(ws, path, tag):
-    out = ws.p('dumps', 'verify', f'bnd_{tag}.tsv')
-    ws.ermerge('bnd-list', path, out, quiet=True)
-    rows = [r.split('\t') for r in out.read_text(encoding='utf-8').splitlines()[2:]]
+def bnd_list(ws, path):
+    rows = [r.split('\t') for r in ws.dump('bnd', path).read_text(encoding='utf-8').splitlines()[2:]]
     return {r[1].lower(): (int(r[0]), r[4]) for r in rows if len(r) >= 5}
 
 
-def verify_bnd(ws, rel, spec, e, names):
+def verify_bnd(ws, rel, spec, e, names, xpath):
     prim = spec.get('primary', 'a')
     oth = 'b' if prim == 'a' else 'a'
     res, errs, notes = spec.get('resolve', {}), [], []
     base = base_path(ws, rel, spec, e)
-    P, Q, X = bnd_list(ws, e[prim], 'p'), bnd_list(ws, e[oth], 'q'), bnd_list(ws, ws.p('staging', rel), 'x')
-    B = bnd_list(ws, base, 'b') if base != '-' else {}
+    P, Q, X = bnd_list(ws, e[prim]), bnd_list(ws, e[oth]), bnd_list(ws, xpath)
+    B = bnd_list(ws, base) if base != '-' else {}
     exp = dict(P)
     for name in set(Q) | set(B):
         p, q, b = P.get(name), Q.get(name), B.get(name)
@@ -219,9 +218,8 @@ def verify_bnd(ws, rel, spec, e, names):
 
 
 # ---------- behavior ----------
-def beh_load(ws, path, tag):
-    prefix = ws.p('dumps', 'verify', f'beh_{tag}')
-    ws.ermerge('beh-dump', path, prefix, quiet=True)
+def beh_load(ws, path):
+    prefix = ws.dump('beh', path)
     nodes = {}
     for line in Path(str(prefix) + '.nodes.jsonl').read_text(encoding='utf-8').splitlines():
         o = json.loads(line)
@@ -259,16 +257,16 @@ def map_to_state(v, smap):
     return v
 
 
-def verify_behavior(ws, rel, spec, e, names):
+def verify_behavior(ws, rel, spec, e, names, xpath):
     keep = spec.get('keep', 'a')
     move = 'b' if keep == 'a' else 'a'
     rep = load_json(ws.p('reports', rel.replace('/', '__') + '.json'), {})
     info = rep.get('stats', {}).get('behavior', {})
     maps, wraps = info.get('stateIdMaps', {}), info.get('wraps', [])
-    B, TB = beh_load(ws, base_path(ws, rel, spec, e), 'b')
-    K, TK = beh_load(ws, e[keep], 'k')
-    M, TM = beh_load(ws, e[move], 'm')
-    X, TX = beh_load(ws, ws.p('staging', rel), 'x')
+    B, TB = beh_load(ws, base_path(ws, rel, spec, e))
+    K, TK = beh_load(ws, e[keep])
+    M, TM = beh_load(ws, e[move])
+    X, TX = beh_load(ws, xpath)
     rB, rK, rM, rX = resolver(TB), resolver(TK), resolver(TM), resolver(TX)
     errs = []
     for t in TB:
@@ -347,11 +345,11 @@ def verify_behavior(ws, rel, spec, e, names):
 
 
 # ---------- text ----------
-def verify_nameid(ws, rel, spec, e, names):
+def verify_nameid(ws, rel, spec, e, names, xpath):
     keep = spec.get('keep', 'a')
     other = 'b' if keep == 'a' else 'a'
     c = read_nameid(base_path(ws, rel, spec, e))
-    k, o, x = read_nameid(e[keep]), read_nameid(e[other]), read_nameid(ws.p('staging', rel))
+    k, o, x = read_nameid(e[keep]), read_nameid(e[other]), read_nameid(xpath)
     errs = []
     if x[:len(c)] != c:
         errs.append('base entries changed')
@@ -362,14 +360,86 @@ def verify_nameid(ws, rel, spec, e, names):
     return errs, [f'{len(x)} entries']
 
 
-def verify_text3(ws, rel, spec, e, names):
-    t, _ = read_text(ws.p('staging', rel))
+def verify_text3(ws, rel, spec, e, names, xpath):
+    """Independent of git merge-file and of its alignment: every line either side changed is accounted for."""
+    t, _ = read_text(xpath)
     bad = [m for m in ('<<<<<<< A', '>>>>>>> B', '||||||| BASE') if m in t]
-    return ([f'conflict markers left: {bad}'] if bad else []), []
+    if bad:
+        return [f'conflict markers left: {bad}'], []
+    base, x = read_lines(base_path(ws, rel, spec, e)), t.splitlines()
+    side = {s: read_lines(e[s]) for s in ('a', 'b')}
+    hunks = {s: {(i1, i2, tuple(side[s][j1:j2])) for _, i1, i2, j1, j2 in line_opcodes(base, side[s])} for s in ('a', 'b')}
+    want = Counter(base)
+    for i1, i2, new in hunks['a'] | hunks['b']:  # a change both sides made identically counts once
+        want.subtract(base[i1:i2])
+        want.update(new)
+    got, errs = Counter(x), []
+    off = {line: got[line] - want[line] for line in set(want) | set(got) if got[line] != want[line]}
+    if off:
+        extra, lost = [k for k, d in off.items() if d > 0], [k for k, d in off.items() if d < 0]
+        errs.append(f'line accounting: {sum(d for d in off.values() if d > 0)} line(s) neither side has (e.g. {extra[:2]}), '
+                    f'{-sum(d for d in off.values() if d < 0)} line(s) missing (e.g. {lost[:2]})')
+    joined = '\n' + '\n'.join(x) + '\n'
+    for s in ('a', 'b'):
+        missing = [i1 + 1 for i1, _, new in sorted(hunks[s]) if new and '\n' + '\n'.join(new) + '\n' not in joined]
+        if missing:
+            errs.append(f"{names[s]}'s changed block(s) at base line(s) {missing[:5]} not found contiguously in the result")
+    return errs, [f'changed blocks: {names["a"]} {len(hunks["a"])}, {names["b"]} {len(hunks["b"])}; line counts = base + both']
 
 
-def verify_copy(ws, rel, src):
-    return ([] if sha256(src) == sha256(ws.p('staging', rel)) else [f'bytes differ from {src}']), []
+def verify_copy(ws, rel, src, xpath):
+    return ([] if sha256(src) == sha256(xpath) else [f'bytes differ from {src}']), []
+
+
+def verify_take_drop(ws, rel, spec, src, xpath):
+    entries = bnd_list(ws, src)
+    hits = {d: [n for n in entries if d.lower() in n] for d in spec['drop_entries']}
+    dropped = {n for h in hits.values() for n in h}
+    errs = [f'drop fragment "{d}" matches no entry of {Path(src).name}' for d, h in hits.items() if not h]
+    if {n: v for n, v in entries.items() if n not in dropped} != bnd_list(ws, xpath):
+        errs.append('entries differ from the source minus the dropped ones')
+    short = sorted(n.replace('/', '\\').split('\\')[-1] for n in dropped)
+    return errs, [f'dropped {len(dropped)} of {len(entries)}: {", ".join(short)}']
+
+
+# ---------- hooks ----------
+LUA_LABEL = re.compile(r'--\s*merge\b')
+
+
+def under_test(ws, rel, build):
+    """The file the three-way rules describe: its pre-hook copy when hooks/post_merge.py changed it."""
+    pre = ws.p('reports', 'prehook', *rel.split('/'))
+    return pre if rel in build.get('hook_patched', []) and pre.exists() else ws.p('staging', *rel.split('/'))
+
+
+def check_hooks(ws, build):
+    """Writes reports/hooks.diff; every hunk must add a labelled line, one hunk per patch() call.
+    Returns (errors, markdown lines for VERIFY.md, {file: (hunks, lines added, lines removed)})."""
+    errs, rows, diff, total, stats = [], [], [], 0, {}
+    for rel in build.get('hook_patched', []):
+        pre, post = ws.p('reports', 'prehook', *rel.split('/')), ws.p('staging', *rel.split('/'))
+        if not pre.exists():
+            rows.append(f'| `{rel}` | not a text file: no diff, not re-verified | |')
+            continue
+        old, new = read_lines(pre), read_lines(post)
+        ops = line_opcodes(old, new)
+        label = LUA_LABEL if rel.lower().endswith(('.hks', '.lua')) else re.compile('merge', re.I)
+        bare = [i1 + 1 for _, i1, _, j1, j2 in ops if not any(label.search(x) for x in new[j1:j2])]
+        if bare:
+            errs.append(f'{rel}: hook change(s) at pre-hook line(s) {bare} carry no `-- merge ...` label')
+        total += len(ops)
+        stats[rel] = (len(ops), sum(j2 - j1 for *_, j1, j2 in ops), sum(i2 - i1 for _, i1, i2, *_ in ops))
+        rows.append(f'| `{rel}` | {stats[rel][0]} hunk(s), +{stats[rel][1]} / -{stats[rel][2]} lines | '
+                    f'{", ".join(str(j1 + 1) for *_, j1, _ in ops)} |')
+        diff += difflib.unified_diff(old, new, f'prehook/{rel}', f'staging/{rel}', lineterm='')
+    calls = build.get('hook_patch_calls') or 0
+    if calls and calls != total:
+        errs.append(f'the hook made {total} hunk(s) with {calls} patch() call(s): each patch must be one contiguous, labelled edit')
+    ws.p('reports', 'hooks.diff').write_text('\n'.join(diff) + '\n', encoding='utf-8')
+    lines = ['', '## Hook changes (hooks/post_merge.py; full diff in reports/hooks.diff)', '',
+             '| file | change | changed lines (after the hook) |', '|---|---|---|'] + rows
+    lines += ['', f'{"FAIL: " + "; ".join(errs) if errs else "ok"} - {total} hunk(s); {calls} patch() call(s) reported by the hook']
+    return errs, lines, stats
 
 
 def run(ws):
@@ -381,29 +451,47 @@ def run(ws):
     results = []
     for item in build['files']:
         rel, how = item['rel'], item['how']
+        if how == 'excluded':
+            results.append((rel, how, [], ['not in staging']))
+            continue
         e = inv['entries'][rel.lower()]
         spec = plan['files'].get(rel, {})
-        if rel in build.get('hook_patched', []) and how in ('copy', 'take'):
-            errs, notes = [], ['changed by hooks/post_merge.py after the build verified it']
+        staged, x = ws.p('staging', *rel.split('/')), under_test(ws, rel, build)
+        hooked = rel in build.get('hook_patched', [])
+        if hooked and x == staged:
+            errs, notes = [], ['changed by the hook; not a text file, so only the build verified it (before the hook)']
         elif how in fns:
-            errs, notes = fns[how](ws, rel, spec, e, names)
+            errs, notes = fns[how](ws, rel, spec, e, names, x)
         elif how == 'copy' or (how == 'take' and not spec.get('drop_entries')):
-            errs, notes = verify_copy(ws, rel, item['source'])
+            errs, notes = verify_copy(ws, rel, item['source'], x)
         elif how == 'take':
-            src = bnd_list(ws, item['source'], 'src')
-            drop = [d.lower() for d in spec['drop_entries']]
-            want = {n: v for n, v in src.items() if not any(d in n for d in drop)}
-            errs, notes = ([] if want == bnd_list(ws, ws.p('staging', rel), 'x') else ['entries differ from source minus dropped']), \
-                          [f'dropped {len(src) - len(want)} entries']
+            errs, notes = verify_take_drop(ws, rel, spec, item['source'], x)
         else:
             errs, notes = [], [f'{how}: not verified automatically']
+        if hooked and x != staged:
+            notes.append('checked on the pre-hook copy')
+        if item.get('sha256') and staged.exists() and sha256(staged) != item['sha256']:
+            errs.append('staging file changed since the build')
         results.append((rel, how, errs, notes))
-        print(f'{"FAIL" if errs else "ok  "} {how:10} {rel}' + ''.join(f'\n       {x}' for x in errs[:10]))
+        print(f'{"FAIL" if errs else "ok  "} {how:10} {rel}' + ''.join(f'\n       {m}' for m in errs[:10]))
     lines = ['# Verification', '', '| file | strategy | result | notes |', '|---|---|---|---|']
     for rel, how, errs, notes in results:
         lines.append(f'| `{rel}` | {how} | {"FAIL: " + "; ".join(errs[:5]) if errs else "ok"} | {"; ".join(notes)} |')
+    n = sum(len(r[2]) for r in results)
+    if 'hook_patched' in build:
+        herrs, hlines, _ = check_hooks(ws, build)
+        lines += hlines
+        n += len(herrs)
     ws.p('reports', 'VERIFY.md').write_text('\n'.join(lines) + '\n', encoding='utf-8')
-    return sum(len(r[2]) for r in results)
+    return n
+
+
+def append_hooks(ws):
+    """build.py, after the hook ran: the same hook section a standalone verify.py run writes."""
+    errs, lines, stats = check_hooks(ws, load_json(ws.p('reports', 'BUILD.json')))
+    with open(ws.p('reports', 'VERIFY.md'), 'a', encoding='utf-8') as f:
+        f.write('\n'.join(lines) + '\n')
+    return errs, stats
 
 
 def main():

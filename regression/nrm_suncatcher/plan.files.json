@@ -1,0 +1,17 @@
+{
+  "_comment": "A = Nightreign Movement 1.0.0-beta.16 (package NightreignMovement-Convergence-3.0.2-ME3), B = Suncatcher 1.4.1, base = Convergence 3.0.2. Merge into the draft plan.json from inventory.py (replace its exclude and files).",
+  "exclude": [],
+  "files": {
+    "regulation.bin": {"strategy": "regulation", "base_source": "base", "primary": "a", "label_b": "Suncatcher 1.4.1"},
+    "action/eventnameid.txt": {"strategy": "nameid", "base_source": "base", "keep": "a"},
+    "action/statenameid.txt": {"strategy": "nameid", "base_source": "base", "keep": "a"},
+    "action/variablenameid.txt": {"strategy": "nameid", "base_source": "base", "keep": "a"},
+    "action/script/c0000.hks": {"strategy": "text3", "base_source": "base", "encoding_from": "b"},
+    "chr/c0000.behbnd.dcx": {"strategy": "behavior", "base_source": "base", "keep": "a", "wrap_order": "move-outer"},
+    "chr/c0000.anibnd.dcx": {"strategy": "tae", "base_source": "base", "primary": "b"},
+    "chr/c0000_a0x.anibnd.dcx": {"strategy": "bnd", "base_source": "base", "primary": "a"},
+    "chr/c0000_a1x.anibnd.dcx": {"strategy": "bnd", "base_source": "base", "primary": "a"},
+    "chr/c0000_a00_hi.anibnd.dcx": {"strategy": "bnd", "base_source": "vanilla", "primary": "a"},
+    "sfx/sfxbnd_c0000.ffxbnd.dcx": {"strategy": "take", "side": "b", "drop_entries": ["f000001800."]}
+  }
+}

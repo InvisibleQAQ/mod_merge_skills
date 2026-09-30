@@ -17,7 +17,7 @@ static class Program
     tae-merge    <base> <a> <b> <out> --primary a|b
     bnd-merge    <base> <a> <b> <out> --primary a|b
     beh-merge    <base.behbnd> <keep.behbnd> <move.behbnd> <out.behbnd> [--wrap-order move-outer|keep-outer]
-    bnd-drop     <in.dcx> <out.dcx> <nameFragment>...
+    bnd-drop     <in.dcx> <out.dcx|-> <nameFragment>... [--dry-run]   (every fragment must match an entry)
   common merge options: --resolve <resolutions.json> --report <report.json> --dry-run";
 
     static int Main(string[] argv)
@@ -43,7 +43,7 @@ static class Program
                 "tae-merge" => TaeMerge.Run(a),
                 "bnd-merge" => BndMerge.Run(a),
                 "beh-merge" => BehCommands.Merge(a),
-                "bnd-drop" => BndMerge.Drop(a.P(0), a.P(1), a.Pos.Skip(2).ToList()),
+                "bnd-drop" => BndMerge.Drop(a),
                 _ => Fail($"unknown command {argv[0]}\n{Usage}"),
             };
         }

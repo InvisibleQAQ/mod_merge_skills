@@ -1,4 +1,6 @@
-"""Text merges: action/*nameid.txt (append-only name tables) and generic three-way text (git merge-file)."""
+"""Text merges: action/*nameid.txt (append-only name tables) and generic three-way text (git merge-file).
+Also line diffs (difflib) for checks that must not depend on git's alignment."""
+import difflib
 import re
 import subprocess
 import tempfile
@@ -17,6 +19,24 @@ def read_text(path):
     return text.replace('\r\n', '\n'), {'bom': bom, 'crlf': '\r\n' in text}
 
 
+def read_lines(path):
+    """Lines of a text file without BOM / line-ending / final-newline differences; [] for no file ('-')."""
+    return [] if path in (None, '-') else read_text(path)[0].splitlines()
+
+
+def line_opcodes(old, new):
+    """difflib opcodes (tag, i1, i2, j1, j2) turning line list `old` into `new`, without 'equal' ones.
+    The common head and tail are cut first: most mod diffs touch a small part of a large script."""
+    head = 0
+    while head < min(len(old), len(new)) and old[head] == new[head]:
+        head += 1
+    tail = 0
+    while tail < min(len(old), len(new)) - head and old[-1 - tail] == new[-1 - tail]:
+        tail += 1
+    sm = difflib.SequenceMatcher(None, old[head:len(old) - tail], new[head:len(new) - tail], autojunk=False)
+    return [(t, i1 + head, i2 + head, j1 + head, j2 + head) for t, i1, i2, j1, j2 in sm.get_opcodes() if t != 'equal']
+
+
 def write_text(path, text, meta):
     if meta['crlf']:
         text = text.replace('\n', '\r\n')
@@ -25,10 +45,10 @@ def write_text(path, text, meta):
     Path(path).write_bytes((BOM if meta['bom'] else b'') + data)
 
 
-def merge3(git, base, a, b, out, encoding_from='base'):
+def merge3(git, base, a, b, out, encoding_from='base', tmp=None):
     """Three-way merge with git merge-file after normalising BOM / CRLF / final newline.
     Returns the number of conflict hunks (0 = clean). Conflicted output keeps <<<<<<< A / ||||||| BASE / >>>>>>> B markers.
-    Output encoding (BOM, line endings) follows `encoding_from` ('base', 'a' or 'b')."""
+    Output encoding (BOM, line endings) follows `encoding_from` ('base', 'a' or 'b'). Scratch files go to `tmp`."""
     texts, metas = {}, {}
     for side, p in (('base', base), ('a', a), ('b', b)):
         if p in (None, '-'):
@@ -36,7 +56,7 @@ def merge3(git, base, a, b, out, encoding_from='base'):
             continue
         t, m = read_text(p)
         texts[side], metas[side] = (t if t.endswith('\n') else t + '\n'), m
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory(dir=tmp) as tmp:
         for side, t in texts.items():
             Path(tmp, side).write_bytes(t.encode('utf-8', errors='surrogateescape'))
         r = subprocess.run([git, 'merge-file', '-p', '--diff3', '-L', 'A', '-L', 'BASE', '-L', 'B',

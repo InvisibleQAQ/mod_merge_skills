@@ -18,6 +18,13 @@ Conflict: <what both mods do, in play terms, with file:function evidence>
 
 Implementation: <plan.json key / hook patch (file, anchor, change)>
 
+Side effects: <what the change also skips or alters - e.g. a caller that branches on another predicate keeps taking
+the patched branch - and the alternative offered; "none found" after reading every caller>
+
+Offered, not applied: <refinements the user did not ask for, with their exact implementation>
+
+### 1.2 ...
+
 ## 2. Mechanical choices (no user input needed)
 
 | file | setting | reason |
@@ -29,7 +36,9 @@ Implementation: <plan.json key / hook patch (file, anchor, change)>
 
 ## 3. Result (filled after build/deploy)
 
-- Build: <counts from reports/BUILD.md>; verification: <reports/VERIFY.md summary>; hooks patched: <files>
+- Build: <counts from reports/BUILD.md>; verification: <reports/VERIFY.md summary>; hooks patched: <files, hunks>
+- Cross-file checks: <reports/CROSSCHECK.md: errors / warnings / info, and what each warning means>
+- Script syntax check: <luac version; exact only with Lua 5.1>
 - Deployed to: <target>; backup: <W/backup/...>; rollback: `python scripts/deploy.py --workspace W --target <target> --rollback --yes`
 - Launcher profile changes: <...>
 

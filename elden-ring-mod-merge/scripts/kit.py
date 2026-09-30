@@ -6,9 +6,9 @@ Workspace layout (one folder per merge job, never inside a mod or game folder):
   inventory.*     file-level comparison of base / A / B
   analysis/       dry-run reports and heuristic findings (analyze.py)
   vanilla/        game files extracted when the base mod does not ship a file
-  dumps/          text dumps used by verify.py
+  dumps/cache/    ermerge dumps keyed by file hash, shared by analyze.py, verify.py and crosscheck.py
   staging/        the merged mod files (build.py); deploy.py copies them into the game's mod folder
-  reports/        per-file merge reports, verify report, hook log
+  reports/        per-file merge reports, verify report, hook diff, cross-file checks
   hooks/post_merge.py   optional decision patches applied after merging (see WORKFLOW.md)
   backup/         files replaced by deploy.py (for rollback)
 """
@@ -30,6 +30,8 @@ MOD_MARKERS = {'regulation.bin', 'action', 'chr', 'parts', 'param', 'event', 'ma
 # Never merged or deployed: backups, logs, editor caches, OS junk.
 JUNK = [r'\.bak$', r'\.backup$', r'\.bak\d*$', r'\.log$', r'\.tmp$', r'(^|/)_dsas_cache/', r'(^|/)thumbs\.db$',
         r'(^|/)desktop\.ini$', r'\.before-[^/]*$', r'(^|/)\.git/', r'\.orig$', r'~$']
+# Text files: merged with git merge-file (text3), snapshotted before hooks, diffed after them.
+TEXT_EXT = ('.hks', '.lua', '.txt', '.ini', '.toml', '.json', '.xml', '.csv', '.js')
 
 
 def fail(msg, code=1):
@@ -126,6 +128,23 @@ class Workspace:
             fail(f'ermerge {args[0]} failed (exit {r.returncode})')
         return r.returncode, out
 
+    def dump(self, kind, path):
+        """Cached ermerge dump of a file, keyed by its content hash (verify.py and crosscheck.py share them;
+        setup.py clears the cache when it rebuilds the tool). Returns the output path:
+          beh   prefix of .nodes.jsonl / .tables.json     tae   .jsonl (raw event bytes, no template)
+          taet  .jsonl with decoded event parameters      param folder of one TSV per param
+          bnd   .tsv entry list"""
+        out = self.p('dumps', 'cache', f'{kind}_{sha256(path)[:24]}')
+        suffix = {'tae': '.jsonl', 'taet': '.jsonl', 'bnd': '.tsv'}.get(kind, '')
+        target, done = Path(str(out) + suffix), Path(str(out) + '.ok')
+        if not done.exists():
+            cmd = {'beh': ['beh-dump', path, out], 'tae': ['tae-dump', path, target],
+                   'taet': ['tae-dump', path, target, self.kit['tae_template']],
+                   'param': ['param-dump', path, self.kit['defs'], out], 'bnd': ['bnd-list', path, target]}[kind]
+            self.ermerge(*cmd, quiet=True)
+            done.write_text('', encoding='utf-8')
+        return target
+
 
 def base_path(ws, rel, spec, inv_entry):
     """Path of the common ancestor of a file, '-' when there is none."""
@@ -138,6 +157,13 @@ def base_path(ws, rel, spec, inv_entry):
             return str(v)
         fail(f'{rel}: vanilla copy missing; run build.py/analyze.py with a configured game folder (setup.py --game)')
     return '-'
+
+
+def copy_side(e):
+    """Side whose copy of a file nobody merges is used: the one that ships it / changed it."""
+    if e['status'] in ('only_a', 'same') or (e['status'] == 'one_changed' and not e.get('a_unchanged')):
+        return 'a'
+    return 'b'
 
 
 def rel_key(rel):

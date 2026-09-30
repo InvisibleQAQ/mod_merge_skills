@@ -9,9 +9,11 @@ Writes inventory.json, inventory.md and, unless it exists (or --force), a draft 
 """
 import argparse
 import re
+import sys
 from pathlib import Path
 
-from kit import Workspace, find_mod_root, is_junk, save_json, sha256, walk
+sys.dont_write_bytecode = True  # keep the skill folder free of __pycache__
+from kit import TEXT_EXT, Workspace, copy_side, find_mod_root, is_junk, save_json, sha256, walk  # noqa: E402
 
 # Suggested strategy by path; the agent confirms or changes it after analysis (see FILE-TYPES.md).
 RULES = [
@@ -19,7 +21,7 @@ RULES = [
     (r'^action/(event|state|variable)nameid\.txt$', 'nameid'),
     (r'\.behbnd\.dcx$', 'behavior'),
     (r'(^|/)c\d{4}\.anibnd\.dcx$', 'tae'),
-    (r'\.(hks|lua|txt|ini|toml|json|xml|csv|js)$', 'text3'),
+    (r'(' + '|'.join(re.escape(x) for x in TEXT_EXT) + r')$', 'text3'),
     (r'bnd\.dcx$', 'bnd'),
 ]
 # Files the base does not ship but the game has in its archives (so a vanilla copy can serve as the base).
@@ -105,6 +107,14 @@ def main():
     lines += ['', '## Files both mods changed', '', '| file | in base | suggested strategy |', '|---|---|---|']
     for e in need:
         lines.append(f'| `{e["rel"]}` | {"yes" if "base" in e else "no"} | {suggest(e["rel"])} |')
+    for st in [s for s in meaning if s != 'both_changed']:
+        group = [e for e in entries.values() if e['status'] == st]
+        if not group:
+            continue
+        lines += ['', f'## {st} ({meaning[st]})', '', '| file | copied from | size | in base |', '|---|---|---:|---|']
+        for e in group:
+            side = copy_side(e)
+            lines.append(f'| `{e["rel"]}` | {inv["names"][side]} | {Path(e[side]).stat().st_size:,} | {"yes" if "base" in e else "no"} |')
     for side, ex in extras.items():
         lines += ['', f'## Package files outside the mod folder ({inv["names"][side]}) - read these', '']
         lines += [f'- `{x}`' for x in ex]

@@ -11,15 +11,16 @@
 
 | script | does | writes |
 |---|---|---|
-| `setup.py --smithbox S --game G [--dotnet D]` | checks prerequisites, builds ermerge, smoke test | `kit.json`, `.kit/` |
-| `inventory.py --a A --b B [--base BASE] [--a-name/--b-name/--base-name] [--force]` | file-level comparison, draft plan | `inventory.json/.md`, `plan.json` |
-| `analyze.py` | dry-run merges, review leads, write-back checks | `analysis/SUMMARY.md`, `analysis/*.json`, `vanilla/` |
-| `build.py` | merge, verify, hooks, luac | `staging/`, `reports/` |
-| `verify.py` | independent three-way check of `staging/` (build runs it) | `reports/VERIFY.md` |
+| `setup.py --smithbox S --game G [--dotnet D]` | checks prerequisites, builds ermerge, smoke test; records the Lua version (warns unless 5.1) | `kit.json`, `.kit/` |
+| `inventory.py --a A --b B [--base BASE] [--a-name/--b-name/--base-name] [--force]` | file-level comparison (every file listed by status), draft plan | `inventory.json/.md`, `plan.json` |
+| `analyze.py` | dry-run merges (and take + drop), review leads, write-back checks on both sides | `analysis/SUMMARY.md`, `analysis/*.json`, `vanilla/` |
+| `build.py` | merge, verify, hooks + hook diff check, luac, cross-file checks | `staging/`, `reports/` |
+| `verify.py` | independent three-way check of `staging/` (build runs it); after a build also the hook diff and unchanged hashes | `reports/VERIFY.md`, `reports/hooks.diff` |
+| `crosscheck.py` | references between files of the merged mod: nameid <-> behavior, HKS names, TAE -> SpEffect / FXR, hard-coded Master_SM states (build runs it) | `reports/CROSSCHECK.md/.json` |
 | `deploy.py --target T [--yes] [--force] [--rollback]` | preview / deploy with backup / roll back | `backup/<time>/` |
 
-Modules: `kit.py` (workspace, file walking), `text_merge.py` (nameid + git merge-file), `hks_analyze.py`
-(script heuristics).
+Modules: `kit.py` (workspace, file walking, cached dumps), `text_merge.py` (nameid, git merge-file, line diffs),
+`hks_analyze.py` (script heuristics). Every script keeps Python from writing `__pycache__` into the skill folder.
 
 ## plan.json
 
@@ -48,6 +49,9 @@ Modules: `kit.py` (workspace, file walking), `text_merge.py` (nameid + git merge
 - `strategy`: `regulation` | `nameid` | `text3` | `behavior` | `tae` | `bnd` | `take` | `manual`.
 - `primary` (regulation/tae/bnd): whose file the result is built on; `keep` (behavior/nameid): whose indices stay.
 - `resolve`: conflict key -> `"a"` or `"b"`; keys are exactly those printed in dry-run reports.
+- `drop_entries` (with `take`, binders only): case-insensitive substrings of the entry path. Every fragment must
+  match at least one entry or the build stops; prefer the full short name up to the dot (`f000001800.`), since
+  `1800` would also match `f000018000.fxr`. analyze and VERIFY.md list every dropped entry.
 - Files not listed are copied if only one side changed them; a both-changed file without an entry stops the build.
 
 ## ermerge commands
@@ -66,7 +70,7 @@ Run as `dotnet W/.kit/bin/ermerge.dll <command> ...` (paths may be relative to t
 | `tae-merge <base> <a> <b> <out> --primary a|b` | TAE container three-way, per animation |
 | `bnd-merge <base> <a> <b> <out> --primary a|b` | any BND4, per entry (FMG per text ID) |
 | `beh-merge <base> <keep> <move> <out> [--wrap-order move-outer|keep-outer]` | behavior graph transplant |
-| `bnd-drop <in> <out> <nameFragment>...` | remove entries |
+| `bnd-drop <in> <out\|-> <nameFragment>... [--dry-run]` | remove entries whose path contains a fragment; prints each with its fragment; exit 1 (nothing written) if a fragment matches nothing |
 
 Merge commands accept `--resolve r.json`, `--report rep.json` (conflicts, stats, notes; behavior also writes
 `rep.log.txt`) and `--dry-run`.
@@ -77,10 +81,12 @@ Merge commands accept `--resolve r.json`, `--report rep.json` (conflicts, stats,
 W/kit.json  plan.json  inventory.json  inventory.md  decisions.md
 W/.kit/            built tool
 W/analysis/        SUMMARY.md, dry-run reports, hks heuristics
-W/vanilla/         extracted unmodded files (mirrors mod paths)
-W/dumps/           dumps used by analysis / verification
+W/vanilla/         extracted unmodded files (mirrors mod paths; sfx/ packs here are also searched by crosscheck)
+W/dumps/cache/     ermerge dumps keyed by file hash, shared by analyze / verify / crosscheck (setup.py clears it)
 W/staging/         merged mod files - what deploy copies
-W/reports/         BUILD.md/json, VERIFY.md, per-file merge reports, behavior logs
+W/reports/         BUILD.md/json, VERIFY.md, CROSSCHECK.md/json, hooks.diff, prehook/ (text files before the
+                   hook), per-file merge reports, behavior logs
+W/scratch/         the agent's and subagents' own notes and decoded copies (nothing else writes outside W)
 W/conflicts/       text files with conflict markers (to resolve by hand)
 W/resolved/        hand-merged files referenced by "manual" entries
 W/hooks/post_merge.py
@@ -89,5 +95,8 @@ W/backup/<time>/   files replaced by deploy + manifest.tsv
 
 ## Exit codes
 
-`0` ok · `1` error (message printed) · `2` usage · `3` unresolved conflicts (nothing written for that file;
-`build.py` stops).
+`0` ok · `1` error (message printed) · `2` usage · `3` unresolved conflicts or an incomplete plan (nothing written
+for that file; `build.py` stops).
+
+`reports/BUILD.json` `status`: `ok` (deploy allowed) or where the build stopped: `conflicts`, `verify_failed`,
+`hook_failed`, `hook_check_failed`, `lua_syntax_error`, `crosscheck_failed`.

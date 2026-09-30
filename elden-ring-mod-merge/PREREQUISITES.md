@@ -16,7 +16,8 @@ is, look at both mods' download pages / readmes together with them; never assume
 >    for; the setup step tells you the exact number if yours is too old.
 > 3. **Python 3.9 or newer** - https://www.python.org/downloads/ (tick "Add python.exe to PATH").
 > 4. **Git for Windows** - https://git-scm.com/downloads (used for three-way merges of script files).
-> 5. Optional: **Lua** (`luac`) for syntax-checking merged scripts.
+> 5. Optional: **Lua 5.1** (`luac5.1` or a `luac` that prints "Lua 5.1") for syntax-checking merged scripts. The
+>    game's scripts use Lua 5.1 syntax; a newer Lua only approximates the check.
 >
 > **Files**
 > 1. **Mod A and mod B, as downloaded** - extract each archive to its own folder and do not edit them. Give me the
@@ -31,8 +32,9 @@ is, look at both mods' download pages / readmes together with them; never assume
 >    require. Nothing in it is changed; unmodded files are read from it when needed.
 > 4. **Where you play from** - the mod folder your launcher loads (for example `Game\mod`) and which launcher you
 >    use (ME3, ModEngine 2, YAFSML, ...). Only needed at the end, when I install the result.
-> 5. **An empty working folder** with free space of about three times the size of the two mods, outside the
->    game and mod folders (for example `D:\mod-merge\A+B`).
+> 5. **An empty working folder** with free space of about three times the size of the two mods plus about 3 GB
+>    for analysis dumps (more when both mods change the animation files), outside the game and mod folders (for
+>    example `D:\mod-merge\A+B`).
 >
 > Please also tell me each mod's name and version, and the base name and version.
 
@@ -43,7 +45,8 @@ is, look at both mods' download pages / readmes together with them; never assume
 - Both mods state the same base and base version; if not, stop: different bases need a port, not a merge.
 - `setup.py` passes (it checks Smithbox, the .NET SDK version, the game folder, git and optional luac, builds the
   tool and runs a smoke test). If the only SDK found is too old, ask for the SDK or pass `--dotnet <path>` to a
-  newer one.
+  newer one. If it warns that luac is not Lua 5.1, tell the user the script syntax check is only approximate
+  (and say so again in the hand-over).
 - `inventory.py` finds a mod root in each folder. A folder that "does not look like an Elden Ring mod folder"
   usually means the user pointed at the archive's parent or at a launcher folder.
 - Regulation versions: `reg-merge` refuses mods built for different game versions (the base's regulation version

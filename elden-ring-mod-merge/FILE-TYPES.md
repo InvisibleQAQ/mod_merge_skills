@@ -42,6 +42,10 @@ version; an item both changed identically is kept; an item both changed differen
   functions after the base script loaded.
 - Merged with `git merge-file` after normalising BOM, CRLF and the final newline; output encoding follows
   `encoding_from` (the game accepts UTF-8 with or without BOM, CRLF or LF). Conflict hunks must be merged by hand.
+  `verify.py` re-checks the result with its own line diff (every line either side changed is in the result).
+- Syntax check: `luac -p` with a Lua 5.1 compiler is exact. Lua 5.2+ accepts `goto`, `//`, bit operators and
+  `<const>` that Havok Script rejects, and rejects 5.1 scripts that use `goto` as a name: with them the check is
+  necessary, not sufficient.
 - A clean text merge is not a clean behaviour merge: see the review leads in WORKFLOW.md (runtime wrappers,
   shared buttons/variables, hard-coded IDs, obfuscation).
 - Overhauls can install a `_G` metatable that turns unknown globals into no-op functions: a missing function then
@@ -86,7 +90,8 @@ version; an item both changed identically is kept; an item both changed differen
 - Merged per entry like other binders. Additionally, FXR IDs are global across all loaded packs: two mods adding
   the same FXR ID to different packs is a collision `analyze.py` reports. Options: share one copy (drop the other
   with `drop_entries`), or give one a new ID (rename the entry, patch the FXR's internal ID, and repoint every TAE
-  event / SpEffectVfxParam that spawns it - a manual job).
+  event / SpEffectVfxParam that spawns it - a manual job). After the build, `crosscheck.py` confirms every FFX ID
+  the mods' TAE events newly use is still in some pack, and reports references that now use the other mod's copy.
 
 ## Text (`bnd` with FMG)
 - `msg/<lang>/*.msgbnd.dcx`: FMG text tables. When both sides changed the same FMG, it is merged per text ID.

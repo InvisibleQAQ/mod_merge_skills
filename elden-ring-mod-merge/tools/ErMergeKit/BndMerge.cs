@@ -4,7 +4,9 @@
 //   changed by both is a conflict (resolution key = entry file name, value "a"/"b").
 //   Entries added by both sides with the same BND ID but different names are reported as conflicts.
 //   Use base '-' when the base does not ship the file (then identical additions merge, different ones conflict).
-// bnd-drop <in> <out> <nameFragment>...   removes entries whose name contains any fragment (case-insensitive).
+// bnd-drop <in> <out|-> <nameFragment>... [--dry-run]   removes entries whose full name contains any fragment
+//   (case-insensitive) and prints every removed entry with the fragment that matched it. A fragment that
+//   matches no entry is an error (exit 1, nothing written): a typo must not silently keep both copies.
 using SoulsFormats;
 
 static class BndMerge
@@ -85,16 +87,33 @@ static class BndMerge
         return p.Write();
     }
 
-    public static int Drop(string input, string output, List<string> fragments)
+    public static int Drop(Args args)
     {
+        string input = args.P(0), output = args.P(1);
+        var fragments = args.Pos.Skip(2).ToList();
+        if (fragments.Count == 0) throw new ArgumentException("bnd-drop needs at least one name fragment");
         var b = Util.ReadBnd(input, out var t);
-        foreach (var f in b.Files.Where(f => fragments.Any(x => f.Name.Contains(x, StringComparison.OrdinalIgnoreCase))).ToList())
+        var drop = new HashSet<BinderFile>();
+        var unmatched = new List<string>();
+        foreach (string x in fragments)
         {
-            b.Files.Remove(f);
-            Console.WriteLine($"  dropped {f.ID} {f.Name}");
+            var hits = b.Files.Where(f => f.Name.Contains(x, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (hits.Count == 0) unmatched.Add(x);
+            foreach (var f in hits)
+            {
+                drop.Add(f);
+                Console.WriteLine($"  dropped {f.ID} {Util.ShortName(f.Name)} (fragment \"{x}\")");
+            }
         }
+        if (unmatched.Count > 0)
+        {
+            Console.Error.WriteLine($"ERROR: {input}: no entry name contains {string.Join(", ", unmatched.Select(x => $"\"{x}\""))}; nothing written");
+            return 1;
+        }
+        b.Files.RemoveAll(drop.Contains);
+        if (args.DryRun) { Console.WriteLine($"bnd-drop (dry run): {drop.Count} entries would be dropped, {b.Files.Count} left"); return 0; }
         Util.Save(output, b.Write(t));
-        Console.WriteLine($"bnd-drop -> {output} ({b.Files.Count} entries left)");
+        Console.WriteLine($"bnd-drop -> {output} ({drop.Count} dropped, {b.Files.Count} entries left)");
         return 0;
     }
 }

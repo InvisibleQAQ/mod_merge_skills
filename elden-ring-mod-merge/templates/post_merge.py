@@ -3,6 +3,8 @@
 usage (by build.py): python post_merge.py <staging folder> <workspace folder>
 Each patch replaces bytes that must occur exactly once; a missing anchor fails the build instead of silently
 skipping a decision (e.g. after a mod update). Keep line endings as in the target file (\\r\\n vs \\n).
+build.py then diffs each patched file against its pre-hook copy (reports/hooks.diff): every changed hunk must carry
+a `-- merge ...` comment, and there must be one hunk per patch() call (it counts the "patched" lines printed below).
 """
 import sys
 from pathlib import Path
