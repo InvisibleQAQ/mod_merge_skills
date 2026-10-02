@@ -22,6 +22,7 @@
 | Same input used by both | review lead + code reading | drop one mod's use of the button / accept both / disable one feature in the mod's own settings | hook patch at the feature's entry point |
 | Runtime wrapper bypasses the other mod's new logic | review lead + code reading | accept (who wins in which situation) / add a condition to the wrapper / drop one feature | hook patch |
 | Feature overlap (two sprint systems, two landing rolls, two dodge variants) | code reading | keep one, keep both with a guard, accept precedence | hook patch or plan |
+| State or index gate: one mod's state value fails the other's state check (e.g. `UpperDefaultState00 == MOVE_DEF0`), or one mod's selector index exceeds the children of a selector only the other side uses | code reading + selector child counts in the behavior dump; in game, a feature silently does nothing or a pose breaks | accept / widen the gate for that state (keyed on the state's own SpEffect or variable) / keep the index in range where that selector is active | hook patch |
 | Effect ID collision across packs | analyze FXR section | share one copy / renumber one side (manual) | `take` + `drop_entries` (the dry-run in SUMMARY.md lists what is dropped), or manual |
 | Reference a decision leaves dangling (dropped effect, excluded file, resolved row) | `crosscheck.py` error | undo / change the decision, or supply the target | plan or hook |
 | One-sided file both need (e.g. a text file one mod replaces wholesale) | inventory + readmes | take / merge by hand | `take`, `manual` |

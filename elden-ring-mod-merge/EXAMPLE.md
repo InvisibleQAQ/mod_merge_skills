@@ -47,6 +47,15 @@ base's DLLs).
 4. FXR 1800: renumber Suncatcher's / **share NRM's**. -> `take` Suncatcher's `sfxbnd_c0000` with
    `drop_entries: ["f000001800."]`.
 5. Heavy landing: **NRM handles it** / remove NRM's roll + disable fall protection. -> nothing.
+6. Asked after deployment (2026-10-01), when the user saw that sprinting in stance first sheathes the blade and ends
+   the stance: leave it / only remove the sheathe / **make NRM's sprint start from the stance** (confirmed in game
+   2026-10-02). The sheathe is Suncatcher's own "L3 in stance = sheathe, then third tier", and the sheathe state is
+   what clears the stance SpEffect 102032. Removing it alone was not enough: NRM starts a sprint only when
+   `UpperDefaultState00 == MOVE_DEF0` (1) but the stance sets 103, and the dash selectors `DashFrontWeight_*` have
+   three weight children while the stance sets `MoveWeightIndex = 3` (Suncatcher added a fourth child only to the
+   walk selectors). -> hook, 7 patches: Suncatcher's `ainb5on1` returns early; weight slot 3 and the stance speed
+   bonus x1.434 are skipped at `MoveSpeedIndex == 2`; NRM's two start gates also accept upper state 103 while 102032
+   is active (the sheathe state uses 103 too but has already cleared it), plus a log line when a start is refused.
 
 Mechanical: behavior `keep: a` (hard-coded IDs; the other direction is blocked), nameid `keep: a`, regulation
 `primary: a` (Suncatcher stripped all row names), TAE `primary: b` (Suncatcher changed 787 TAE files plus 91
@@ -69,9 +78,11 @@ analyze's dry-run of the last entry lists exactly `f000001800.fxr` and `f0000018
 
 - Build: `c0000.hks` merged cleanly by `git merge-file` (verify accounts for NRM's 2 and Suncatcher's 150 changed
   blocks); behavior 36,905 objects = 36,672 (NRM) + 233; TAE 19,442 animations = 18,995 + 447; nameid
-  3126 / 2469 / 656 entries; `sfxbnd_c0000` 10 of 12 entries; all verification checks passed; the hook diff is 1
-  labelled hunk (`c0000.hks` +1 line at 450; 2 hunks before decision 3 changed to allow); `luac -p` passed (Lua
-  5.5 on that machine: approximate).
+  3126 / 2469 / 656 entries; `sfxbnd_c0000` 10 of 12 entries; all verification checks passed; the hook diff is 8
+  labelled hunks from 8 `patch()` calls (decision 1: 1 in `c0000.hks`; decision 6: 3 in `c0000.hks`, 4 in
+  `nrm-extension.hks`). A first hand-written version of decision 6 would have failed this check: two replaced lines
+  carried no label, and one patch spanned an unchanged line, which makes two hunks. `luac -p` passed (Lua 5.5 on that
+  machine: approximate).
 - Cross-file checks: 0 errors. Warnings, none caused by the merge: SpEffects 100360 / 112045010 referenced by new
   TAE events of both mods but in no regulation (the base references them too); Suncatcher's decoded literals
   `W_AttackBothLightDash` (an event that exists nowhere) and `L_Foot_Target2` / `R_Foot_Target2` (probably bone
