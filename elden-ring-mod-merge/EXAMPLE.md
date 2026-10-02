@@ -41,8 +41,9 @@ base's DLLs).
    `if VGhoMVNB() then NjiwOxnT(TRUE) elseif ...`, so while L3 is held it still skips its speed-index branches;
    offered alternative: patch `VGhoMVNB` too.
 2. Crouch after that: restore plain L3 / **keep Suncatcher's ACTION+L3**. -> nothing.
-3. NRM sprint during stance: **block it** / allow. -> hook: `and NrmOriginalEnv(1116,102032)==FALSE` appended to
-   NRM's sprint-allowed condition.
+3. NRM sprint during stance: block it / **allow** (first answered block; changed to allow on 2026-10-01). -> nothing:
+   `nrm-extension.hks` is copied from NRM unchanged. Checked before allowing it: NRM swallows only the L3 action
+   request, while Suncatcher's stance code reads L3's hold duration, so the two do not interfere.
 4. FXR 1800: renumber Suncatcher's / **share NRM's**. -> `take` Suncatcher's `sfxbnd_c0000` with
    `drop_entries: ["f000001800."]`.
 5. Heavy landing: **NRM handles it** / remove NRM's roll + disable fall protection. -> nothing.
@@ -68,8 +69,8 @@ analyze's dry-run of the last entry lists exactly `f000001800.fxr` and `f0000018
 
 - Build: `c0000.hks` merged cleanly by `git merge-file` (verify accounts for NRM's 2 and Suncatcher's 150 changed
   blocks); behavior 36,905 objects = 36,672 (NRM) + 233; TAE 19,442 animations = 18,995 + 447; nameid
-  3126 / 2469 / 656 entries; `sfxbnd_c0000` 10 of 12 entries; all verification checks passed; the hook diff is 2
-  labelled hunks (`c0000.hks` +1 line at 450, `nrm-extension.hks` 1 line changed at 670); `luac -p` passed (Lua
+  3126 / 2469 / 656 entries; `sfxbnd_c0000` 10 of 12 entries; all verification checks passed; the hook diff is 1
+  labelled hunk (`c0000.hks` +1 line at 450; 2 hunks before decision 3 changed to allow); `luac -p` passed (Lua
   5.5 on that machine: approximate).
 - Cross-file checks: 0 errors. Warnings, none caused by the merge: SpEffects 100360 / 112045010 referenced by new
   TAE events of both mods but in no regulation (the base references them too); Suncatcher's decoded literals
