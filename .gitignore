@@ -1,4 +1,4 @@
-bin/
-obj/
+/elden-ring-mod-merge/tools/ErMergeKit/bin/
+/elden-ring-mod-merge/tools/ErMergeKit/obj/
 __pycache__/
 *.pyc
